@@ -1,0 +1,108 @@
+import cv2
+import numpy as np
+import time
+
+cap = cv2.VideoCapture(0)
+
+prev = time.time()
+frame_width = 480
+frame_height = 360
+print("FPS:", fps)
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    frame = cv2.resize(frame, (frame_width, frame_height))
+
+    # Skin mask
+    #Using YCrCb color space for skin detection
+    #Convert the frame to YCrCb color space
+    ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+    # Define skin using mask in YCrCb color space
+    mask = cv2.inRange(ycrcb, (0,135,85), (255,180,135))
+    #smooth the mask
+    mask = cv2.GaussianBlur(mask, (5,5), 0)
+    # Morphological operations to clean up the mask
+    h, w = frame.shape[:2]
+    contour_mask = np.zeros((h, w), dtype=np.uint8)
+    #find contours
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if contours:
+
+        # Largest contour = hand candidate
+        cnt = max(contours, key=cv2.contourArea)
+
+        if cv2.contourArea(cnt) > 1000:
+
+            # Draw contour
+            cv2.drawContours(frame, [cnt], -1, (0,255,0), 2)
+            cv2.drawContours(contour_mask, [cnt], -1, 255, -1)
+            cv2.imshow("Contour Mask", frame)
+
+            # ---- CONVEXITY DEFECTS ----
+            hull_indices = cv2.convexHull(cnt, returnPoints=False)
+
+            if hull_indices is not None and len(hull_indices) > 3:
+
+                defects = cv2.convexityDefects(cnt, hull_indices)
+
+                if defects is not None:
+                    for i in range(defects.shape[0]):
+                        s, e, f, depth = defects[i, 0]
+                        start = tuple(cnt[s][0])
+                        end   = tuple(cnt[e][0])
+                        far   = tuple(cnt[f][0])
+
+                        cv2.circle(frame, far, 5, (0,0,255), -1)
+                        cv2.line(frame, start, end, (0,255,0), 2)
+
+    # -----------------------------------------------------
+    # ZONE CHECKING
+    # -----------------------------------------------------
+
+    danger_mask = np.zeros((h, w), dtype=np.uint8)
+    warning_mask = np.zeros((h, w), dtype=np.uint8)
+
+    danger_box = (50, 30, 200, 150)
+    warning_box = (30, 20, 220, 170)
+
+    cv2.rectangle(danger_mask, danger_box[:2], danger_box[2:], 255, -1)
+    cv2.rectangle(warning_mask, warning_box[:2], warning_box[2:], 255, -1)
+
+    danger_overlap = cv2.bitwise_and(contour_mask, danger_mask)
+    warning_overlap = cv2.bitwise_and(contour_mask, warning_mask)
+
+    if np.any(danger_overlap):
+        state = "DANGER DANGER"
+        color = (0,0,255)
+    elif np.any(warning_overlap):
+        state = "WARNING"
+        color = (0,255,255)
+    else:
+        state = "SAFE"
+        color = (0,255,0)
+
+    # Draw boxes
+    cv2.rectangle(frame, danger_box[:2], danger_box[2:], (0,0,255), 2)
+    cv2.rectangle(frame, warning_box[:2], warning_box[2:], (0,255,255), 2)
+
+    cv2.putText(frame, state, (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+
+    # FPS
+    now = time.time()
+    fps = 1 / (now - prev)
+    prev = now
+    cv2.putText(frame, f"FPS: {fps:.1f}", (10,60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+
+    cv2.imshow("Hand Detection", frame)
+    cv2.imshow("Skin Mask", mask)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+
+cap.release()
+cv2.destroyAllWindows()
